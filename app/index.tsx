@@ -1,22 +1,25 @@
-import { StyleSheet, TextInput, FlatList, View, Text } from 'react-native';
+import {
+  StyleSheet,
+  TextInput,
+  FlatList,
+  View,
+  Text,
+  LayoutAnimation,
+} from 'react-native';
 import theme from '../theme';
 import ShoppingListItem from '../components/ShoppingListItem';
 import React from 'react';
+import { getFromStorage, saveToStorage } from '../utils/storage';
+import * as Haptics from 'expo-haptics';
 
 type ShoppingListItemType = {
   id: string;
   name: string;
+  completedAtTimestamp?: number;
+  lastUpdatedTimestamp: number;
 };
 
-// const initialList: ShoppingListItemType[] = [
-//   { id: '1', name: 'Coffee' },
-//   { id: '2', name: 'Tea' },
-//   { id: '3', name: 'Idea' },
-// ];
-
-// const newList = new Array(1000)
-//   .fill(null)
-//   .map((item, index) => ({ id: index.toString(), name: index.toString() }));
+const storageKey = 'shopping-list';
 
 export default function App() {
   const [value, setValue] = React.useState('');
@@ -24,18 +27,75 @@ export default function App() {
     ShoppingListItemType[]
   >([]);
 
-  const handleSubmit = () => {
+  React.useEffect(() => {
+    const fetchData = async () => {
+      const data = await getFromStorage(storageKey);
+
+      if (data) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setShoppingList(data);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const handleOnSubmitEditing = () => {
     if (value) {
-      setShoppingList((prevList) => {
-        return [{ id: new Date().toTimeString(), name: value }, ...prevList];
-      });
+      const newShoppingList = [
+        {
+          id: new Date().toTimeString(),
+          name: value,
+          lastUpdatedTimestamp: Date.now(),
+        },
+        ...shoppingList,
+      ];
+
+      saveToStorage(storageKey, newShoppingList);
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setShoppingList(newShoppingList);
       setValue('');
     }
   };
 
+  const handleOnDelete = (id: string) => {
+    const newShoppingList = shoppingList.filter((item) => item.id !== id);
+
+    saveToStorage(storageKey, newShoppingList);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShoppingList(newShoppingList);
+  };
+
+  const handleToggleOnComplete = (id: string) => {
+    const newShoppingList = shoppingList.map((item) => {
+      if (item.id === id) {
+        if (item.completedAtTimestamp) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+
+        return {
+          ...item,
+          lastUpdatedTimestamp: Date.now(),
+          completedAtTimestamp: item.completedAtTimestamp
+            ? undefined
+            : Date.now(),
+        };
+      }
+
+      return item;
+    });
+
+    saveToStorage(storageKey, newShoppingList);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShoppingList(newShoppingList);
+  };
+
   return (
     <FlatList
-      data={shoppingList}
+      data={orderShoppingList(shoppingList)}
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       stickyHeaderIndices={[0]}
@@ -51,15 +111,43 @@ export default function App() {
           value={value}
           onChangeText={setValue}
           returnKeyType="done"
-          onSubmitEditing={handleSubmit}
+          onSubmitEditing={handleOnSubmitEditing}
         />
       }
       renderItem={({ item }) => {
-        // console.log(item);
-        return <ShoppingListItem name={item.name} />;
+        return (
+          <ShoppingListItem
+            name={item.name}
+            completed={Boolean(item.completedAtTimestamp)}
+            onDelete={() => handleOnDelete(item.id)}
+            onToggleComplete={() => handleToggleOnComplete(item.id)}
+          />
+        );
       }}
     />
   );
+}
+
+function orderShoppingList(shoppingList: ShoppingListItemType[]) {
+  return shoppingList.sort((item1, item2) => {
+    if (item1.completedAtTimestamp && item2.completedAtTimestamp) {
+      return item2.completedAtTimestamp - item1.completedAtTimestamp;
+    }
+
+    if (item1.completedAtTimestamp && !item2.completedAtTimestamp) {
+      return 1;
+    }
+
+    if (!item1.completedAtTimestamp && item2.completedAtTimestamp) {
+      return -1;
+    }
+
+    if (!item1.completedAtTimestamp && !item2.completedAtTimestamp) {
+      return item2.lastUpdatedTimestamp - item1.lastUpdatedTimestamp;
+    }
+
+    return 0;
+  });
 }
 
 const styles = StyleSheet.create({
@@ -67,7 +155,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colorWhite,
     paddingVertical: 16,
-    paddingHorizontal: 12,
   },
   contentContainer: {
     paddingBottom: 32,
